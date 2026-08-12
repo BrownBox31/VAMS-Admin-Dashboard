@@ -41,6 +41,7 @@ async function main() {
   // 1b. Create Bajaj Company and Admin
   const bajajCompany = await prisma.company.create({
     data: {
+      id: 'b812efd9-a412-4011-9a99-b1d5e3cdae99',
       name: 'Bajaj',
       settings: {
         create: {
@@ -53,6 +54,7 @@ async function main() {
 
   await prisma.user.create({
     data: {
+      id: 'f90fa27d-f421-49e0-82a8-fdbd5bc2c399',
       email: 'sbodkhe@gmail.com',
       name: 'S Bodkhe',
       passwordHash: 'Bajaj@123',
