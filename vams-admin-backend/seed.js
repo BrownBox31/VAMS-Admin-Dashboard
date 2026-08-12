@@ -38,6 +38,29 @@ async function main() {
     }
   });
 
+  // 1b. Create Bajaj Company and Admin
+  const bajajCompany = await prisma.company.create({
+    data: {
+      name: 'Bajaj',
+      settings: {
+        create: {
+          maxUsers: 10,
+          allowedRoles: ['SUPER_ADMIN', 'FACTORY_MANAGER', 'SUPERVISOR', 'WORKER'],
+        }
+      }
+    }
+  });
+
+  await prisma.user.create({
+    data: {
+      email: 'sbodkhe@gmail.com',
+      name: 'S Bodkhe',
+      passwordHash: 'Bajaj@123',
+      role: 'SUPER_ADMIN',
+      companyId: bajajCompany.id,
+    }
+  });
+
   // 2. Create Tata Motors Tenant
   const tataCompany = await prisma.company.create({
     data: {
