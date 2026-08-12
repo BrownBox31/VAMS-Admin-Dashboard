@@ -35,3 +35,15 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary backend scripts
+vams-admin-backend/check_env.js
+vams-admin-backend/check_notifications.js
+vams-admin-backend/get_company.js
+vams-admin-backend/get_user.js
+vams-admin-backend/test_dispatch.js
+vams-admin-backend/test_def.js
+vams-admin-backend/query_db.js
+
+# Project documentation PDF
+Project-Documentation.pdf

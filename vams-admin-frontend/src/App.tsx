@@ -33,6 +33,19 @@ axios.interceptors.request.use((config) => {
   return config;
 }, (err) => Promise.reject(err));
 
+// Add response interceptor to handle token expiry / unauthorized errors automatically
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem('vams_admin_token');
+      localStorage.removeItem('vams_admin_selected_company_id');
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
 interface AlertSummary {
   totalDefects: number;
   openDefects: number;
@@ -130,7 +143,7 @@ export default function App() {
     auditTimeline: AuditTimelineEvent[];
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'dispatch' | 'users' | 'policy' | 'companies' | 'alerts'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'dispatch' | 'users' | 'policy' | 'companies' | 'alerts' | 'ai-clustering'>('overview');
 
   // Telemetry Modal Inspector State
   const [telemetryModalOpen, setTelemetryModalOpen] = useState(false);
@@ -145,12 +158,22 @@ export default function App() {
     setIsLoadingTelemetryAlerts(true);
     try {
       const res = await axios.get('/alerts');
-      setAllFetchedAlerts(res.data);
+      if (Array.isArray(res.data)) {
+        setAllFetchedAlerts(res.data);
+      } else {
+        console.error('Invalid telemetry alerts response format:', res.data);
+        if (analytics?.companiesData && Array.isArray(analytics.companiesData)) {
+          const aggregated = analytics.companiesData.flatMap(c => 
+            Array.isArray(c.alerts) ? c.alerts.map(a => ({ ...a, company: { name: c.name } })) : []
+          );
+          setAllFetchedAlerts(aggregated);
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch telemetry alerts list:', err);
-      if (analytics?.companiesData) {
+      if (analytics?.companiesData && Array.isArray(analytics.companiesData)) {
         const aggregated = analytics.companiesData.flatMap(c => 
-          c.alerts.map(a => ({ ...a, company: { name: c.name } }))
+          Array.isArray(c.alerts) ? c.alerts.map(a => ({ ...a, company: { name: c.name } })) : []
         );
         setAllFetchedAlerts(aggregated);
       }
@@ -195,6 +218,7 @@ export default function App() {
 
   // Alert Definitions & Broadcast State
   const [definitions, setDefinitions] = useState<any[]>([]);
+  const [defectMasters, setDefectMasters] = useState<any[]>([]);
   const [broadcasts, setBroadcasts] = useState<any[]>([]);
   const [editingDef, setEditingDef] = useState<any | null>(null);
   const [defAlertId, setDefAlertId] = useState('');
@@ -244,6 +268,75 @@ export default function App() {
   const [policyRulebook, setPolicyRulebook] = useState<any>({});
   const [policyIsActive, setPolicyIsActive] = useState<boolean>(true);
 
+  // Python Defect Diagnostics State
+  const [pythonRawDefects, setPythonRawDefects] = useState<any[]>([]);
+  const [pythonCleanedDefects, setPythonCleanedDefects] = useState<any[]>([]);
+  const [pythonGroupedDefects, setPythonGroupedDefects] = useState<any[]>([]);
+  const [pythonStatus, setPythonStatus] = useState<any>(null);
+  const [isFetchingPythonData, setIsFetchingPythonData] = useState(false);
+  const [pythonActionLoading, setPythonActionLoading] = useState<string | null>(null);
+  const [pythonSubTab, setPythonSubTab] = useState<'grouped' | 'cleaned' | 'raw'>('grouped');
+
+  const fetchPythonData = async () => {
+    setIsFetchingPythonData(true);
+    try {
+      const [rawRes, cleanedRes, groupedRes, statusRes] = await Promise.all([
+        axios.get('/alerts/python-raw'),
+        axios.get('/alerts/python-cleaned'),
+        axios.get('/alerts/python-grouped'),
+        axios.get('/alerts/python-status')
+      ]);
+      setPythonRawDefects(Array.isArray(rawRes.data) ? rawRes.data : []);
+      setPythonCleanedDefects(Array.isArray(cleanedRes.data) ? cleanedRes.data : []);
+      setPythonGroupedDefects(Array.isArray(groupedRes.data) ? groupedRes.data : []);
+      setPythonStatus(statusRes.data);
+    } catch (err) {
+      console.error('Failed to fetch Python data:', err);
+    } finally {
+      setIsFetchingPythonData(false);
+    }
+  };
+
+  const handleRunPythonClean = async () => {
+    setPythonActionLoading('cleaning');
+    try {
+      const res = await axios.post('/alerts/python-clean');
+      alert(res.data.message || 'Cleaner process triggered successfully.');
+      setTimeout(() => fetchPythonData(), 2000);
+    } catch (err) {
+      alert('Failed to trigger cleaner script.');
+    } finally {
+      setPythonActionLoading(null);
+    }
+  };
+
+  const handleRunPythonCluster = async () => {
+    setPythonActionLoading('clustering');
+    try {
+      const res = await axios.post('/alerts/python-cluster');
+      alert(res.data.message || 'Similarity clustering process triggered successfully.');
+      setTimeout(() => fetchPythonData(), 2000);
+    } catch (err) {
+      alert('Failed to trigger similarity clustering script.');
+    } finally {
+      setPythonActionLoading(null);
+    }
+  };
+
+  const [isSyncingDb, setIsSyncingDb] = useState(false);
+
+  const handleSyncPythonToDb = async () => {
+    setIsSyncingDb(true);
+    try {
+      const res = await axios.post('/alerts/python-sync-db');
+      alert(res.data.message || 'Defects synchronized to database successfully.');
+    } catch (err) {
+      alert('Failed to synchronize defects to database.');
+    } finally {
+      setIsSyncingDb(false);
+    }
+  };
+
   // Fetch logged in profile details
   useEffect(() => {
     if (token) {
@@ -272,12 +365,33 @@ export default function App() {
       }
     }
   }, [token]);
+  const [coreBackendUrl, setCoreBackendUrl] = useState<string>('');
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await axios.get('/system/config');
+        if (res.data?.coreBackendUrl) {
+          let url = res.data.coreBackendUrl;
+          const idx = url.indexOf('/api/');
+          if (idx !== -1) {
+            url = url.substring(0, idx);
+          }
+          setCoreBackendUrl(url);
+          console.log('[Config] Loaded Core Backend URL for WebSocket:', url);
+        }
+      } catch (err) {
+        console.error('[Config] Failed to fetch system config:', err);
+      }
+    };
+    fetchConfig();
+  }, []);
 
   // Real-time socket client connection for instant updates
   useEffect(() => {
     if (!token) return;
 
-    const wsUrl = 'http://127.0.0.1:3000';
+    const wsUrl = coreBackendUrl || 'http://127.0.0.1:3000';
     console.log('[Socket] Connecting to core real-time socket server:', wsUrl);
     const socket = io(wsUrl, {
       query: { token },
@@ -288,8 +402,14 @@ export default function App() {
       console.log('[Socket] Connected successfully, active socket ID:', socket.id);
     });
 
+    const playNotificationSound = (_data?: any) => {
+      // Muted on laptop dashboard by default
+      console.log('[Sound] Notification sound muted on laptop dashboard.');
+    };
+
     const refreshDashboard = (data?: any) => {
       console.log('[Socket Event Received] Triggering dashboard telemetry refresh:', data);
+      playNotificationSound(data);
       fetchAnalytics();
       if (selectedCompanyId && selectedCompanyId !== 'all') {
         fetchSettings();
@@ -314,13 +434,14 @@ export default function App() {
     return () => {
       socket.disconnect();
     };
-  }, [token, selectedCompanyId]);
+  }, [token, selectedCompanyId, coreBackendUrl]);
 
   // Fetch analytics when selectedCompanyId changes and set up a polling interval for real-time dashboard updates
   useEffect(() => {
     if (!token || !selectedCompanyId) return;
 
     fetchAnalytics();
+    fetchDefectMasters();
     if (selectedCompanyId !== 'all') {
       fetchSettings();
       fetchDefinitions();
@@ -337,7 +458,11 @@ export default function App() {
   const fetchCompanies = async () => {
     try {
       const res = await axios.get('/companies');
-      setCompanies(res.data);
+      if (Array.isArray(res.data)) {
+        setCompanies(res.data);
+      } else {
+        console.error('Invalid companies response format:', res.data);
+      }
     } catch (err) {
       console.error('Failed to fetch company list:', err);
     }
@@ -381,7 +506,11 @@ export default function App() {
   const fetchAnalytics = async () => {
     try {
       const res = await axios.get('/alerts/analytics');
-      setAnalytics(res.data);
+      if (res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+        setAnalytics(res.data);
+      } else {
+        console.error('Invalid analytics response format:', res.data);
+      }
     } catch (err) {
       console.error('Failed to fetch dashboard metrics:', err);
     }
@@ -390,14 +519,18 @@ export default function App() {
   const fetchSettings = async () => {
     try {
       const res = await axios.get('/companies/settings');
-      setPolicyMaxUsers(res.data.maxUsers);
-      setPolicyAllowedRoles(res.data.allowedRoles || []);
-      setPolicyWhatsappEnabled(res.data.whatsappEnabled);
-      setPolicyWhatsappApiKey(res.data.whatsappApiKey || '');
-      setPolicyWhatsappSenderNum(res.data.whatsappSenderNum || '');
-      setPolicyTier(res.data.company?.tier || 'BASIC');
-      setPolicyIsActive(res.data.company?.isActive !== false);
-      setPolicyRulebook(res.data.rulebook || {});
+      if (res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+        setPolicyMaxUsers(res.data.maxUsers ?? 0);
+        setPolicyAllowedRoles(res.data.allowedRoles || []);
+        setPolicyWhatsappEnabled(!!res.data.whatsappEnabled);
+        setPolicyWhatsappApiKey(res.data.whatsappApiKey || '');
+        setPolicyWhatsappSenderNum(res.data.whatsappSenderNum || '');
+        setPolicyTier(res.data.company?.tier || 'BASIC');
+        setPolicyIsActive(res.data.company?.isActive !== false);
+        setPolicyRulebook(res.data.rulebook || {});
+      } else {
+        console.error('Invalid settings response format:', res.data);
+      }
     } catch (err) {
       console.error('Failed to fetch company configurations:', err);
     }
@@ -406,16 +539,37 @@ export default function App() {
   const fetchDefinitions = async () => {
     try {
       const res = await axios.get('/alerts/definitions');
-      setDefinitions(res.data);
+      if (Array.isArray(res.data)) {
+        setDefinitions(res.data);
+      } else {
+        console.error('Invalid definitions response format:', res.data);
+      }
     } catch (err) {
       console.error('Failed to fetch alert definitions:', err);
+    }
+  };
+
+  const fetchDefectMasters = async () => {
+    try {
+      const res = await axios.get('/alerts/defect-masters');
+      if (Array.isArray(res.data)) {
+        setDefectMasters(res.data);
+      } else {
+        console.error('Invalid defect masters response format:', res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch defect masters:', err);
     }
   };
 
   const fetchBroadcasts = async () => {
     try {
       const res = await axios.get('/alerts/broadcasts');
-      setBroadcasts(res.data);
+      if (Array.isArray(res.data)) {
+        setBroadcasts(res.data);
+      } else {
+        console.error('Invalid broadcasts response format:', res.data);
+      }
     } catch (err) {
       console.error('Failed to fetch broadcasts:', err);
     }
@@ -833,6 +987,18 @@ export default function App() {
             >
               <Bell className="w-4 h-4" />
               Alert Management
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('ai-clustering'); if (pythonRawDefects.length === 0) { fetchPythonData(); } }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === 'ai-clustering' 
+                  ? 'bg-gradient-to-r from-[#3b82f6]/10 to-[#8b5cf6]/5 border-l-4 border-[#3b82f6] text-white' 
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Activity className="w-4 h-4 text-[#8b5cf6]" />
+              AI Defect Clustering
             </button>
 
             <button
@@ -1671,10 +1837,19 @@ export default function App() {
           </div>
         )}
 
-        {/* Alert Management Tab Content */}
         {activeTab === 'alerts' && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {selectedCompanyId === 'all' ? (
+              <div className="glass-panel p-8 text-center text-gray-400 rounded-2xl border border-white/5">
+                <AlertTriangle className="w-8 h-8 text-yellow-500 mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-white mb-2">Alert Management Scoping Required</h3>
+                <p className="text-xs max-w-md mx-auto">
+                  Please select a specific company tenant from the <strong>Tenant Scope</strong> selector in the top-right header to define and manage alert templates.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Alert Definition Console Form */}
               <div className="lg:col-span-2 glass-panel p-8 rounded-2xl border border-white/5 shadow-xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-[3px] grad-primary"></div>
@@ -1708,8 +1883,14 @@ export default function App() {
                         value={defName}
                         onChange={e => setDefName(e.target.value)}
                         placeholder="e.g. Factory Fire Alert"
+                        list="defect-masters-list"
                         className="w-full bg-[#121620] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#3b82f6] transition-all"
                       />
+                      <datalist id="defect-masters-list">
+                        {defectMasters.map(dm => (
+                          <option key={dm.id} value={dm.name} />
+                        ))}
+                      </datalist>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Category / Alert Type</label>
@@ -2093,7 +2274,11 @@ export default function App() {
                         return matchesSearch && matchesSeverity;
                       })
                       .map(def => {
+                        const systemRoleMatch = SYSTEM_ROLES.find(r => r.id === def.primaryAssigneeId || r.role === def.primaryAssigneeId || `role_${r.role}` === def.primaryAssigneeId);
                         const assigneeUser = analytics?.userPerformance?.find(u => u.id === def.primaryAssigneeId);
+                        const assigneeDisplay = systemRoleMatch
+                          ? `[ROLE] ${systemRoleMatch.role.replace('_', ' ')}`
+                          : (assigneeUser ? assigneeUser.name : (def.primaryAssigneeId || 'Unknown'));
                         return (
                           <tr key={def.id} className="hover:bg-white/5 transition-all">
                             <td className="py-4 px-4 font-semibold text-gray-400">{def.alertId || 'N/A'}</td>
@@ -2108,7 +2293,7 @@ export default function App() {
                                   : 'bg-gray-850 text-gray-400'
                               }`}>{def.severity}</span>
                             </td>
-                            <td className="py-4 px-4">{assigneeUser ? assigneeUser.name : 'Unknown'}</td>
+                            <td className="py-4 px-4">{assigneeDisplay}</td>
                             <td className="py-4 px-4">{def.escalationTimeout} mins</td>
                             <td className="py-4 px-4">
                               {def.escalationChain && def.escalationChain.length > 0 ? (
@@ -2206,8 +2391,10 @@ export default function App() {
                 </table>
               </div>
             </div>
-          </div>
+          </>
         )}
+      </div>
+    )}
 
         {/* Users Tab Content */}
         {activeTab === 'users' && (
@@ -2435,6 +2622,236 @@ export default function App() {
                     Save Policy Configuration
                   </button>
                 </form>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AI Defect Clustering Tab Content */}
+        {activeTab === 'ai-clustering' && (
+          <div className="space-y-8 animate-fadeIn">
+            {/* Header / Intro */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel p-8 rounded-2xl border border-white/5 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#3b82f6] to-[#8b5cf6]"></div>
+              <div>
+                <h2 className="text-xl font-bold text-white mb-2" style={{ fontFamily: 'var(--font-title)' }}>
+                  AI Defect Clustering & STT Diagnostics
+                </h2>
+                <p className="text-xs text-gray-400">
+                  Clean noisy logs and group semantically similar defects to identify recurring quality trends.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleSyncPythonToDb}
+                  disabled={isSyncingDb || pythonCleanedDefects.length === 0}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white rounded-xl text-xs font-bold transition-all shadow-md disabled:opacity-50"
+                >
+                  <CheckCircle className={`w-3.5 h-3.5 ${isSyncingDb ? 'animate-pulse' : ''}`} />
+                  {isSyncingDb ? 'Syncing to DB...' : 'Sync Cleaned Defects to DB'}
+                </button>
+                <button
+                  onClick={fetchPythonData}
+                  disabled={isFetchingPythonData}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl text-xs font-semibold transition-all"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isFetchingPythonData ? 'animate-spin' : ''}`} />
+                  {isFetchingPythonData ? 'Refreshing...' : 'Refresh Diagnostic Data'}
+                </button>
+              </div>
+            </div>
+
+            {/* Run Operations Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 relative overflow-hidden">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">1. Qwen Log Cleaner</h3>
+                    <p className="text-[10px] text-gray-500 mt-1">Cleans speech-to-text typos, slang, and maps multiple defects</p>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    pythonStatus?.tasks?.cleaner?.status === 'running' 
+                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      : pythonStatus?.tasks?.cleaner?.status === 'success'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : pythonStatus?.tasks?.cleaner?.status === 'failed'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                      : 'bg-gray-800 text-gray-400 border border-gray-700'
+                  }`}>
+                    {pythonStatus?.tasks?.cleaner?.status || 'idle'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleRunPythonClean}
+                  disabled={pythonActionLoading !== null || pythonStatus?.tasks?.cleaner?.status === 'running'}
+                  className="w-full btn-premium bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 rounded-xl text-xs font-bold text-white hover:opacity-90 transition-all disabled:opacity-50"
+                >
+                  {pythonActionLoading === 'cleaning' ? 'Triggering Cleaner...' : 'Run Cleaner Script'}
+                </button>
+                {pythonStatus?.tasks?.cleaner?.error && (
+                  <p className="text-[10px] text-rose-400 mt-2 font-mono">{pythonStatus.tasks.cleaner.error}</p>
+                )}
+              </div>
+
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 relative overflow-hidden">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">2. Semantic Embeddings & Clustering</h3>
+                    <p className="text-[10px] text-gray-500 mt-1">Runs Agglomerative Clustering using Sentence Transformer embeddings</p>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    pythonStatus?.tasks?.clustering?.status === 'running' 
+                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      : pythonStatus?.tasks?.clustering?.status === 'success'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : pythonStatus?.tasks?.clustering?.status === 'failed'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                      : 'bg-gray-800 text-gray-400 border border-gray-700'
+                  }`}>
+                    {pythonStatus?.tasks?.clustering?.status || 'idle'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleRunPythonCluster}
+                  disabled={pythonActionLoading !== null || pythonStatus?.tasks?.clustering?.status === 'running'}
+                  className="w-full btn-premium bg-gradient-to-r from-purple-600 to-pink-600 py-2.5 rounded-xl text-xs font-bold text-white hover:opacity-90 transition-all disabled:opacity-50"
+                >
+                  {pythonActionLoading === 'clustering' ? 'Triggering Clustering...' : 'Run Clustering Script'}
+                </button>
+                {pythonStatus?.tasks?.clustering?.error && (
+                  <p className="text-[10px] text-rose-400 mt-2 font-mono">{pythonStatus.tasks.clustering.error}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Sub-tab selectors */}
+            <div className="flex border-b border-white/5 gap-6">
+              <button
+                onClick={() => setPythonSubTab('grouped')}
+                className={`pb-3 text-xs font-semibold uppercase tracking-wider border-b-2 transition-all ${
+                  pythonSubTab === 'grouped' ? 'border-[#3b82f6] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                Grouped Clusters ({pythonGroupedDefects.length})
+              </button>
+              <button
+                onClick={() => setPythonSubTab('cleaned')}
+                className={`pb-3 text-xs font-semibold uppercase tracking-wider border-b-2 transition-all ${
+                  pythonSubTab === 'cleaned' ? 'border-[#3b82f6] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                Cleaned Defect Dictionary ({pythonCleanedDefects.length})
+              </button>
+              <button
+                onClick={() => setPythonSubTab('raw')}
+                className={`pb-3 text-xs font-semibold uppercase tracking-wider border-b-2 transition-all ${
+                  pythonSubTab === 'raw' ? 'border-[#3b82f6] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                Raw Diagnostic Logs ({pythonRawDefects.length})
+              </button>
+            </div>
+
+            {/* Tab content area */}
+            {isFetchingPythonData ? (
+              <div className="p-12 text-center text-gray-400 flex flex-col items-center justify-center gap-3">
+                <RefreshCw className="w-8 h-8 text-[#3b82f6] animate-spin" />
+                <span className="text-xs font-semibold uppercase tracking-wider">Syncing Defect Data...</span>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* 1. Grouped Defects */}
+                {pythonSubTab === 'grouped' && (
+                  pythonGroupedDefects.length === 0 ? (
+                    <div className="glass-panel p-12 text-center text-gray-500 text-xs rounded-2xl border border-white/5">
+                      No groups generated yet. Please run the Semantic Clustering script above.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {pythonGroupedDefects.map((g, idx) => (
+                        <div key={idx} className="glass-panel p-6 rounded-2xl border border-white/5 hover:border-white/10 transition-all flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#a855f7]"></span>
+                              <h4 className="text-sm font-bold text-white">Group {g.group}</h4>
+                            </div>
+                            <ul className="space-y-2">
+                              {g.defects.map((d: string, dIdx: number) => (
+                                <li key={dIdx} className="text-xs text-gray-300 bg-white/5 px-3 py-2 rounded-lg border border-white/5 font-mono">
+                                  - {d}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                )}
+
+                {/* 2. Cleaned Defect Dictionary */}
+                {pythonSubTab === 'cleaned' && (
+                  pythonCleanedDefects.length === 0 ? (
+                    <div className="glass-panel p-12 text-center text-gray-500 text-xs rounded-2xl border border-white/5">
+                      No cleaned defects found. Please run the Qwen cleaner script above.
+                    </div>
+                  ) : (
+                    <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+                      <div className="p-4 bg-[#111522] border-b border-white/5">
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider">Official Cleaned Defect Dictionary</h4>
+                      </div>
+                      <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
+                        {pythonCleanedDefects.map((d, idx) => (
+                          <div key={idx} className="p-3.5 text-xs font-mono text-gray-300 hover:bg-white/5 transition-all">
+                            {idx + 1}. {d}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                )}
+
+                {/* 3. Raw Logs */}
+                {pythonSubTab === 'raw' && (
+                  pythonRawDefects.length === 0 ? (
+                    <div className="glass-panel p-12 text-center text-gray-500 text-xs rounded-2xl border border-white/5">
+                      No raw logs found in data directory.
+                    </div>
+                  ) : (
+                    <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-[#111522] border-b border-white/5 text-gray-400 font-bold uppercase tracking-wider">
+                              <th className="p-4">ID</th>
+                              <th className="p-4">Raw Defect Log Message</th>
+                              <th className="p-4">Rework Station</th>
+                              <th className="p-4">STT Speech Variants Mapped</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 text-gray-300 font-medium">
+                            {pythonRawDefects.map((r, idx) => (
+                              <tr key={idx} className="hover:bg-white/5 transition-all">
+                                <td className="p-4 font-mono">{r.id}</td>
+                                <td className="p-4 font-semibold text-white">{r.defectName}</td>
+                                <td className="p-4">Rework Shop: {r.reworkStationId}</td>
+                                <td className="p-4">
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {r.mispronouncedWords?.map((w: string, wIdx: number) => (
+                                      <span key={wIdx} className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded text-[10px] font-mono">
+                                        {w}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )
+                )}
               </div>
             )}
           </div>

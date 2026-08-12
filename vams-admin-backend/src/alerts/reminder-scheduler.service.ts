@@ -9,17 +9,7 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
   constructor(private prisma: PrismaService) {}
 
   onModuleInit() {
-    this.logger.log('Repeating reminder scheduler service initialized.');
-    // Check every 1 minute for rapid development testing and precise SLA execution
-    const intervalMs = process.env.REMINDER_INTERVAL_MS 
-      ? parseInt(process.env.REMINDER_INTERVAL_MS, 10) 
-      : 1 * 60 * 1000;
-
-    this.intervalId = setInterval(() => {
-      this.checkEscalationsAndReminders().catch((err) => {
-        this.logger.error('Error in background reminders loop:', err.stack);
-      });
-    }, intervalMs);
+    this.logger.log('Repeating reminder scheduler service disabled in Admin Backend to prevent connection pool exhaustion. Core backend handles reminders.');
   }
 
   onModuleDestroy() {
@@ -37,13 +27,29 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
       where: { status: 'OPEN' },
     });
 
+    if (activeAssignments.length === 0) {
+      return;
+    }
+
+    // 2. Pre-fetch all alerts and their company references in bulk
+    const alertIds = Array.from(new Set(activeAssignments.map(a => a.alertId)));
+    const alerts = await this.prisma.alert.findMany({
+      where: { id: { in: alertIds } },
+      include: { company: true },
+    });
+    const alertMap = new Map(alerts.map(a => [a.id, a]));
+
+    // 3. Pre-fetch all alert definitions in bulk
+    const defIds = Array.from(new Set(alerts.map(a => a.alertDefinitionId).filter(Boolean))) as string[];
+    const alertDefs = defIds.length > 0
+      ? await this.prisma.alertDefinition.findMany({ where: { id: { in: defIds } } })
+      : [];
+    const defMap = new Map(alertDefs.map(d => [d.id, d]));
+
     for (const assignment of activeAssignments) {
       try {
-        // Fetch full alert and definition context
-        const alert = await this.prisma.alert.findUnique({
-          where: { id: assignment.alertId },
-          include: { company: true },
-        });
+        // Fetch full alert and definition context from maps
+        const alert = alertMap.get(assignment.alertId);
         if (!alert || alert.status === 'RESOLVED') {
           // If alert is already resolved, deactivate this assignment
           await this.prisma.alertAssignment.update({
@@ -60,9 +66,7 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
         let criticalOverride = false;
 
         if (alert.alertDefinitionId) {
-          const alertDef = await this.prisma.alertDefinition.findUnique({
-            where: { id: alert.alertDefinitionId },
-          });
+          const alertDef = defMap.get(alert.alertDefinitionId);
           if (alertDef) {
             escalationTimeoutMin = alertDef.escalationTimeout;
             escalationChain = alertDef.escalationChain || [];
@@ -214,8 +218,7 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
               }
             });
 
-            // Trigger core notification webhook
-            const coreUrl = process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1';
+            // Trigger core notification webhook to both local and onrender servers
             try {
               const msg = `SLA Exceeded. Escalated to ${isRoleTarget ? `Role ${nextTargetRole}` : 'you'}: defect '${alert.defectName}' (VIN: ${alert.vin || 'N/A'}).`;
               
@@ -233,13 +236,25 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
                 payload.loopCompleted = true;
               }
 
-              await (global as any).fetch(`${coreUrl}/alerts/event`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
+              const coreUrls = [
+                process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1',
+                'https://vams-backend.onrender.com/api/v1'
+              ];
+              const uniqueUrls = Array.from(new Set(coreUrls.map(u => u.trim().replace(/\/$/, ''))));
+
+              await Promise.all(uniqueUrls.map(async (coreUrl) => {
+                try {
+                  await (global as any).fetch(`${coreUrl}/alerts/event`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  });
+                } catch (err: any) {
+                  this.logger.warn(`Failed to trigger escalation webhook for ${coreUrl}: ${err.message}`);
+                }
+              }));
             } catch (err: any) {
-              this.logger.warn(`Failed to trigger escalation webhook: ${err.message}`);
+              this.logger.warn(`Failed to trigger escalation webhook setup: ${err.message}`);
             }
 
             continue; // Skip reminder check for this loop since we transitioned
@@ -278,24 +293,35 @@ export class ReminderSchedulerService implements OnModuleInit, OnModuleDestroy {
               },
             });
 
-            // Trigger core notification webhook
-            const coreUrl = process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1';
+            // Trigger core notification webhook to both local and onrender servers
             try {
               const msg = `Reminder! Your assigned alert '${alert.defectName}' (VIN: ${alert.vin || 'N/A'}) is unresolved and unseen.`;
-              await (global as any).fetch(`${coreUrl}/alerts/event`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  source: 'scheduler',
-                  event_type: 'REMINDER',
-                  companyId: alert.companyId,
-                  alertId: alert.id,
-                  assignedToUserId: assignment.assignedToId,
-                  message: msg,
-                }),
-              });
+              const coreUrls = [
+                process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1',
+                'https://vams-backend.onrender.com/api/v1'
+              ];
+              const uniqueUrls = Array.from(new Set(coreUrls.map(u => u.trim().replace(/\/$/, ''))));
+
+              await Promise.all(uniqueUrls.map(async (coreUrl) => {
+                try {
+                  await (global as any).fetch(`${coreUrl}/alerts/event`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      source: 'scheduler',
+                      event_type: 'REMINDER',
+                      companyId: alert.companyId,
+                      alertId: alert.id,
+                      assignedToUserId: assignment.assignedToId,
+                      message: msg,
+                    }),
+                  });
+                } catch (err: any) {
+                  this.logger.warn(`Failed to trigger reminder webhook for ${coreUrl}: ${err.message}`);
+                }
+              }));
             } catch (err: any) {
-              this.logger.warn(`Failed to trigger reminder webhook: ${err.message}`);
+              this.logger.warn(`Failed to trigger reminder webhook setup: ${err.message}`);
             }
           }
         }

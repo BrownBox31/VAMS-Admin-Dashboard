@@ -68,4 +68,11 @@ export class AuthController {
   getUsers(@Param('companyId') companyId: string) {
     return this.authService.getCompanyUsers(companyId);
   }
+
+  @Get('system/config')
+  getSystemConfig() {
+    return {
+      coreBackendUrl: process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1'
+    };
+  }
 }

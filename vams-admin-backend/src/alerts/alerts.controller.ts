@@ -10,6 +10,44 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 export class AlertsController {
   constructor(private readonly alertsService: AlertsService) {}
 
+  @Get('python-raw')
+  getPythonRaw() {
+    return this.alertsService.getPythonRaw();
+  }
+
+  @Get('python-cleaned')
+  getPythonCleaned() {
+    return this.alertsService.getPythonCleaned();
+  }
+
+  @Get('python-grouped')
+  getPythonGrouped() {
+    return this.alertsService.getPythonGrouped();
+  }
+
+  @Post('python-clean')
+  runPythonClean() {
+    return this.alertsService.runPythonClean();
+  }
+
+  @Post('python-cluster')
+  runPythonCluster() {
+    return this.alertsService.runPythonCluster();
+  }
+
+  @Get('python-status')
+  getPythonStatus() {
+    return this.alertsService.getPythonStatus();
+  }
+
+  @Post('python-sync-db')
+  syncPythonDb(@Request() req: any) {
+    const companyId = req.user.role === 'SUPER_ADMIN'
+      ? (req.headers['x-company-id'] || req.user.companyId)
+      : req.user.companyId;
+    return this.alertsService.syncPythonToDb(companyId);
+  }
+
   @Post('manual')
   createManual(
     @Request() req: any,
@@ -95,22 +133,22 @@ export class AlertsController {
   // Live Alert Actions
   @Post(':id/takeover')
   takeoverAlert(@Request() req: any, @Param('id') id: string) {
-    return this.alertsService.takeoverAlert(req.user.id, id);
+    return this.alertsService.takeoverAlert(req.user.id, id, req.headers.authorization);
   }
 
   @Post(':id/resolve')
   resolveAlert(@Request() req: any, @Param('id') id: string, @Body('reason') reason: string) {
-    return this.alertsService.resolveAlert(req.user.id, id, reason);
+    return this.alertsService.resolveAlert(req.user.id, id, reason, req.headers.authorization);
   }
 
   @Post(':id/reopen')
   reopenAlert(@Request() req: any, @Param('id') id: string) {
-    return this.alertsService.reopenAlert(req.user.id, id);
+    return this.alertsService.reopenAlert(req.user.id, id, req.headers.authorization);
   }
 
   @Patch(':id/assign')
   reassignAlert(@Request() req: any, @Param('id') id: string, @Body('assignedToUserId') assignedToUserId: string) {
-    return this.alertsService.reassignAlert(req.user.id, id, assignedToUserId);
+    return this.alertsService.reassignAlert(req.user.id, id, assignedToUserId, req.headers.authorization);
   }
 
   @Get()
@@ -119,6 +157,14 @@ export class AlertsController {
       ? (req.headers['x-company-id'] || 'all')
       : req.user.companyId;
     return this.alertsService.findAll(companyId);
+  }
+
+  @Get('defect-masters')
+  getDefectMasters(@Request() req: any) {
+    const companyId = req.user.role === 'SUPER_ADMIN'
+      ? (req.headers['x-company-id'] || 'all')
+      : req.user.companyId;
+    return this.alertsService.getDefectMasters(companyId);
   }
 
   @Get(':id')
