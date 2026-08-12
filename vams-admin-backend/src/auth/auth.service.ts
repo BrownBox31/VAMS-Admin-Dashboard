@@ -11,11 +11,11 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async login(dto: LoginDto) {
+  async login(dto: any) {
     const email = dto.email.trim().toLowerCase();
     
-    // Resolve Company first if company name or ID is passed
-    let targetCompanyId = dto.companyIdOrName;
+    // Resolve Company first if company name or ID is passed (supports both companyId and companyIdOrName)
+    let targetCompanyId = dto.companyIdOrName || dto.companyId;
     if (targetCompanyId) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetCompanyId);
       if (!isUuid) {
@@ -36,7 +36,9 @@ export class AuthService {
       include: { company: true },
     });
 
-    if (!user || user.passwordHash !== dto.passwordHash || !user.isActive || !user.company.isActive) {
+    // Support both password and passwordHash
+    const incomingPassword = dto.passwordHash || dto.password;
+    if (!user || user.passwordHash !== incomingPassword || !user.isActive || !user.company.isActive) {
       throw new UnauthorizedException('Invalid login credentials or account/tenant suspended');
     }
 
