@@ -58,7 +58,7 @@ async function main() {
       email: 'sbodkhe@gmail.com',
       name: 'S Bodkhe',
       passwordHash: 'Bajaj@123',
-      role: 'SUPER_ADMIN',
+      role: 'COMPANY_ADMIN',
       companyId: bajajCompany.id,
     }
   });
