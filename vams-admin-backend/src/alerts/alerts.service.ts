@@ -116,8 +116,7 @@ export class AlertsService {
     // Trigger VAMS core backend event ingestion in the background for both local and onrender backends
     (async () => {
       const coreUrls = [
-        process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1',
-        'https://vams-backend.onrender.com/api/v1'
+        process.env.CORE_BACKEND_URL || 'http://127.0.0.1:3000/api/v1'
       ];
       const uniqueUrls = Array.from(new Set(coreUrls.map(u => u.trim().replace(/\/$/, ''))));
       const fetchFn = typeof fetch !== 'undefined' ? fetch : (globalThis as any).fetch;
@@ -163,8 +162,11 @@ export class AlertsService {
     return mockAlert;
   }
 
-  async getAdvancedAnalytics(companyId: string) {
+  async getAdvancedAnalytics(companyId: string, requestingUser?: any) {
     const isGlobal = !companyId || companyId === 'all';
+    const userRole = requestingUser?.role;
+    const userId = requestingUser?.id;
+    const isNonAdmin = userRole && userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN';
 
     // 1. Fetch companies list
     const companies = await this.prisma.company.findMany({
@@ -172,6 +174,7 @@ export class AlertsService {
       include: {
         settings: true,
         users: {
+          where: isNonAdmin ? { role: userRole as any } : {},
           select: {
             id: true,
             name: true,
@@ -181,6 +184,12 @@ export class AlertsService {
           }
         },
         alerts: {
+          where: isNonAdmin ? {
+            OR: [
+              { assignedToUserId: userId },
+              { assignedToRole: userRole as any },
+            ],
+          } : {},
           include: {
             assignedToUser: {
               select: {
@@ -196,14 +205,18 @@ export class AlertsService {
     });
 
     // 2. Compute metrics
-    const dbAlerts = isGlobal 
-      ? await this.prisma.alert.findMany({
-          include: { assignments: true, resolution: true }
-        })
-      : await this.prisma.alert.findMany({
-          where: { companyId },
-          include: { assignments: true, resolution: true }
-        });
+    const alertWhereClause: any = isGlobal ? {} : { companyId };
+    if (isNonAdmin) {
+      alertWhereClause.OR = [
+        { assignedToUserId: userId },
+        { assignedToRole: userRole as any },
+      ];
+    }
+
+    const dbAlerts = await this.prisma.alert.findMany({
+      where: alertWhereClause,
+      include: { assignments: true, resolution: true }
+    });
 
     // Merge recent in-memory cache alerts
     const nowTime = Date.now();
@@ -214,6 +227,13 @@ export class AlertsService {
         continue;
       }
       if (isGlobal || a.companyId === companyId) {
+        if (isNonAdmin) {
+          const matchesUser = a.assignedToUserId === userId;
+          const matchesRole = a.assignedToRole === userRole;
+          if (!matchesUser && !matchesRole) {
+            continue;
+          }
+        }
         if (!alerts.some(alert => alert.id === id)) {
           alerts.push(a);
         }
@@ -232,14 +252,15 @@ export class AlertsService {
     }, {} as Record<string, number>);
 
     // 4. Resolve userPerformance list
-    const allUsers = isGlobal 
-      ? await this.prisma.user.findMany({
-          select: { id: true, name: true, email: true, role: true, isActive: true, companyId: true, company: { select: { name: true } } }
-        })
-      : await this.prisma.user.findMany({
-          where: { companyId },
-          select: { id: true, name: true, email: true, role: true, isActive: true, companyId: true, company: { select: { name: true } } }
-        });
+    const userWhereClause: any = isGlobal ? {} : { companyId };
+    if (isNonAdmin) {
+      userWhereClause.role = userRole as any;
+    }
+
+    const allUsers = await this.prisma.user.findMany({
+      where: userWhereClause,
+      select: { id: true, name: true, email: true, role: true, isActive: true, companyId: true, company: { select: { name: true } } }
+    });
 
     const userIds = allUsers.map(u => u.id);
     const companyAlertIds = alerts.map(a => a.id);
@@ -310,6 +331,8 @@ export class AlertsService {
           assignedToUser: a.assignedToUser,
           createdAt: a.createdAt,
           updatedAt: a.updatedAt,
+          escalationStep: a.escalationStep,
+          nextEscalationAt: a.nextEscalationAt,
         })),
       };
     });
@@ -339,8 +362,19 @@ export class AlertsService {
       };
     });
 
+    const timelineWhereClause: any = isGlobal ? {} : { alert: { companyId } };
+    if (isNonAdmin) {
+      timelineWhereClause.alert = {
+        companyId,
+        OR: [
+          { assignedToUserId: userId },
+          { assignedToRole: userRole as any },
+        ],
+      };
+    }
+
     const auditTimeline = await this.prisma.defectResolutionTimeline.findMany({
-      where: isGlobal ? {} : { alert: { companyId } },
+      where: timelineWhereClause,
       include: {
         performedByUser: {
           select: { name: true, role: true },
@@ -359,6 +393,10 @@ export class AlertsService {
         continue;
       }
       if (isGlobal || t.companyId === companyId) {
+        if (isNonAdmin) {
+          const alert = alerts.find(a => a.id === t.alertId);
+          if (!alert) continue;
+        }
         if (!mergedTimeline.some(evt => evt.id === id)) {
           recentTimelineEvents.push(t);
         }
@@ -396,10 +434,22 @@ export class AlertsService {
     };
   }
 
-  async findAll(companyId: string) {
+  async findAll(companyId: string, requestingUser?: any) {
     const isGlobal = !companyId || companyId === 'all';
+    const userRole = requestingUser?.role;
+    const userId = requestingUser?.id;
+    const isNonAdmin = userRole && userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN';
+
+    const whereClause: any = isGlobal ? {} : { companyId };
+    if (isNonAdmin) {
+      whereClause.OR = [
+        { assignedToUserId: userId },
+        { assignedToRole: userRole as any },
+      ];
+    }
+
     return this.prisma.alert.findMany({
-      where: isGlobal ? {} : { companyId },
+      where: whereClause,
       include: {
         assignedToUser: { select: { id: true, name: true, role: true } },
         company: { select: { id: true, name: true } },
@@ -408,17 +458,34 @@ export class AlertsService {
     });
   }
 
-  async findOne(companyId: string, id: string) {
+  async findOne(companyId: string, id: string, requestingUser?: any) {
     const isGlobal = !companyId || companyId === 'all';
+    const userRole = requestingUser?.role;
+    const userId = requestingUser?.id;
+    const isNonAdmin = userRole && userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN';
+
+    const whereClause: any = isGlobal ? { id } : { id, companyId };
+    if (isNonAdmin) {
+      whereClause.OR = [
+        { assignedToUserId: userId },
+        { assignedToRole: userRole as any },
+      ];
+    }
+
     const alert = await this.prisma.alert.findFirst({
-      where: isGlobal ? { id } : { id, companyId },
+      where: whereClause,
       include: {
         assignments: true,
         timeline: {
           include: { performedByUser: { select: { name: true, role: true } } },
           orderBy: { createdAt: 'asc' },
         },
-        resolution: true,
+        resolution: {
+          include: {
+            resolvedByUser: { select: { id: true, name: true, role: true } },
+          },
+        },
+        assignedToUser: { select: { id: true, name: true, role: true } },
       },
     });
     if (!alert) throw new NotFoundException('Alert not found');

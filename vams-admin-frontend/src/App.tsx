@@ -14,7 +14,9 @@ import {
   Bell,
   Search,
   X,
-  RefreshCw
+  RefreshCw,
+  User,
+  Clock
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
@@ -101,6 +103,8 @@ interface CompanyData {
     assignedToUser: { id: string; name: string; role: string; } | null;
     createdAt: string;
     updatedAt: string;
+    escalationStep: number;
+    nextEscalationAt: string | null;
   }[];
 }
 
@@ -1606,23 +1610,87 @@ export default function App() {
                     <AlertTriangle className="w-5 h-5 text-amber-500" />
                     Open Defect Tickets
                   </h3>
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                  <div className="space-y-4 max-h-[420px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                     {analytics?.companiesData && analytics.companiesData[0]?.alerts?.filter(a => a.status !== 'RESOLVED').length ? (
                       analytics.companiesData[0].alerts.filter(a => a.status !== 'RESOLVED').map(a => {
-                        let sevClass = 'bg-gray-800 text-gray-400';
-                        if (a.severity === 'HIGH') sevClass = 'bg-orange-950/40 text-orange-400 border border-orange-900/40';
-                        else if (a.severity === 'CRITICAL') sevClass = 'bg-red-950/40 text-red-400 border border-red-900/40';
+                        let borderClass = 'border-l-gray-500';
+                        let sevClass = 'bg-gray-800/60 text-gray-400 border border-gray-700/40';
+                        if (a.severity === 'HIGH') {
+                          borderClass = 'border-l-orange-500';
+                          sevClass = 'bg-orange-500/10 text-orange-400 border border-orange-500/20';
+                        } else if (a.severity === 'CRITICAL' || a.severity === 'EMERGENCY') {
+                          borderClass = 'border-l-red-500';
+                          sevClass = 'bg-red-500/10 text-red-400 border border-red-500/20';
+                        } else if (a.severity === 'MEDIUM') {
+                          borderClass = 'border-l-amber-500';
+                          sevClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                        } else if (a.severity === 'LOW') {
+                          borderClass = 'border-l-blue-500';
+                          sevClass = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
+                        }
+
+                        let displayStatus = a.status;
+                        let statClass = 'text-blue-400 bg-blue-500/10 border border-blue-500/20';
+                        if (a.status === 'RESOLVED') {
+                          displayStatus = 'RESOLVED';
+                          statClass = 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20';
+                        } else if (a.escalationStep > 0) {
+                          displayStatus = 'ESCALATED';
+                          statClass = 'text-red-400 bg-red-500/10 border border-red-500/20';
+                        } else if (a.status === 'IN_PROGRESS' || a.assignedToUserId) {
+                          displayStatus = 'IN PROGRESS';
+                          statClass = 'text-amber-400 bg-amber-500/10 border border-amber-500/20';
+                        } else {
+                          displayStatus = 'PENDING';
+                          statClass = 'text-blue-400 bg-blue-500/10 border border-blue-500/20';
+                        }
+
+                        const isBreached = a.status !== 'RESOLVED' && (a.escalationStep > 0 || (a.nextEscalationAt && new Date(a.nextEscalationAt) < new Date()));
 
                         return (
-                          <div key={a.id} className="p-3 bg-[#111522]/50 border border-white/5 rounded-xl flex items-center justify-between gap-4 text-xs hover:bg-[#111522]/80 transition-all">
-                            <div>
-                              <p className="font-bold text-white font-mono">{a.vin}</p>
-                              <p className="text-gray-400 font-medium mt-0.5">{a.defectName}</p>
-                              <span className="text-[10px] text-gray-500 block mt-1 font-medium">Assigned: {a.assignedToUser ? a.assignedToUser.name : 'Dynamic'}</span>
+                          <div 
+                            key={a.id} 
+                            className={`p-4 bg-[#111522]/30 border border-white/5 border-l-4 ${borderClass} rounded-xl flex items-center justify-between gap-4 hover:bg-[#111522]/60 hover:border-white/10 hover:translate-x-1 transition-all duration-300`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-2 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-gray-400 font-mono tracking-wider font-semibold">
+                                  VIN: {a.vin}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase ${sevClass}`}>
+                                  {a.severity}
+                                </span>
+                              </div>
+                              
+                              <p className="text-white font-bold text-sm mt-2 truncate tracking-wide">
+                                {a.defectName || 'Unspecified Defect'}
+                              </p>
+                              
+                              <div className="flex items-center gap-4 mt-2.5 flex-wrap">
+                                <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                                  <User className="w-3.5 h-3.5 text-gray-500" />
+                                  <span>
+                                    Assigned: <strong className="text-gray-300 font-semibold">{a.assignedToUser ? a.assignedToUser.name : 'Dynamic'}</strong>
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                                  <Clock className="w-3.5 h-3.5 text-gray-500" />
+                                  <span>
+                                    {new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-right flex flex-col items-end gap-1.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${sevClass}`}>{a.severity}</span>
-                              <span className="text-[9px] text-[#3b82f6] bg-[#3b82f6]/10 px-1.5 py-0.5 rounded font-bold">{a.status}</span>
+                            
+                            <div className="flex flex-col items-end justify-center gap-2 shrink-0">
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase shadow-sm ${statClass}`}>
+                                {displayStatus}
+                              </span>
+                              {isBreached && (
+                                <span className="bg-red-500/10 text-red-400 border border-red-500/20 text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider animate-pulse shadow-sm">
+                                  SLA Breach
+                                </span>
+                              )}
                             </div>
                           </div>
                         );

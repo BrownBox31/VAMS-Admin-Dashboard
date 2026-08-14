@@ -73,6 +73,8 @@ model Alert {
   createdById        String?
   isManual           Boolean                    @default(true)
   lastReminderSentAt DateTime?
+  escalationStep     Int                        @default(0)
+  nextEscalationAt   DateTime?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
   company            Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -83,6 +85,7 @@ model Alert {
 
   @@index([companyId])
   @@index([status])
+  @@index([nextEscalationAt])
   @@map("alerts")
 }
 

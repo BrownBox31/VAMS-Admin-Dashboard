@@ -64,7 +64,7 @@ export class AlertsController {
     const companyId = req.user.role === 'SUPER_ADMIN'
       ? (req.headers['x-company-id'] || 'all')
       : req.user.companyId;
-    return this.alertsService.getAdvancedAnalytics(companyId);
+    return this.alertsService.getAdvancedAnalytics(companyId, req.user);
   }
 
   // Alert Definitions CRUD
@@ -156,7 +156,7 @@ export class AlertsController {
     const companyId = req.user.role === 'SUPER_ADMIN'
       ? (req.headers['x-company-id'] || 'all')
       : req.user.companyId;
-    return this.alertsService.findAll(companyId);
+    return this.alertsService.findAll(companyId, req.user);
   }
 
   @Get('defect-masters')
@@ -172,6 +172,6 @@ export class AlertsController {
     const companyId = req.user.role === 'SUPER_ADMIN'
       ? (req.headers['x-company-id'] || 'all')
       : req.user.companyId;
-    return this.alertsService.findOne(companyId, id);
+    return this.alertsService.findOne(companyId, id, req.user);
   }
 }
