@@ -126,8 +126,11 @@ export class AlertsController {
   }
 
   @Delete('broadcasts/:id')
-  deleteBroadcast(@Param('id') id: string) {
-    return this.alertsService.deleteBroadcast(id);
+  deleteBroadcast(@Request() req: any, @Param('id') id: string) {
+    const companyId = req.user.role === 'SUPER_ADMIN'
+      ? (req.headers['x-company-id'] || req.user.companyId || 'all')
+      : (req.user.companyId || 'all');
+    return this.alertsService.deleteBroadcast(companyId, id);
   }
 
   // Live Alert Actions

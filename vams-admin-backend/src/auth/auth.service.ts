@@ -42,7 +42,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid login credentials or account/tenant suspended');
     }
 
-    const payload = { sub: user.id, email: user.email, role: user.role, companyId: user.companyId };
+    const payload = { 
+      sub: user.id, 
+      email: user.email, 
+      role: user.role, 
+      companyId: user.companyId,
+      companyName: user.company.name,
+      companyCode: user.company.name,
+    };
     return {
       accessToken: this.jwtService.sign(payload),
       user: {
@@ -52,6 +59,7 @@ export class AuthService {
         role: user.role,
         companyId: user.companyId,
         companyName: user.company.name,
+        companyCode: user.company.name,
       },
     };
   }

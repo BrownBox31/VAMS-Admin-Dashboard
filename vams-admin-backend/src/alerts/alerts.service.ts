@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateManualAlertDto } from './dto/create-manual-alert.dto';
 import { Severity } from '@prisma/client';
@@ -174,7 +174,7 @@ export class AlertsService {
       include: {
         settings: true,
         users: {
-          where: isNonAdmin ? { role: userRole as any } : {},
+          where: isNonAdmin ? { role: userRole as any } : { role: { not: 'SUPER_ADMIN' } },
           select: {
             id: true,
             name: true,
@@ -255,6 +255,10 @@ export class AlertsService {
     const userWhereClause: any = isGlobal ? {} : { companyId };
     if (isNonAdmin) {
       userWhereClause.role = userRole as any;
+    } else {
+      userWhereClause.role = {
+        not: 'SUPER_ADMIN'
+      };
     }
 
     const allUsers = await this.prisma.user.findMany({
@@ -558,6 +562,16 @@ export class AlertsService {
   }
 
   async updateDefinition(companyId: string, id: string, dto: any) {
+    const def = await this.prisma.alertDefinition.findUnique({
+      where: { id },
+    });
+    if (!def) {
+      throw new NotFoundException('Alert definition template not found');
+    }
+    if (companyId !== 'all' && def.companyId !== companyId) {
+      throw new ForbiddenException('Access denied: Alert definition belongs to another company');
+    }
+
     const updatedData = {
       id,
       companyId,
@@ -604,6 +618,16 @@ export class AlertsService {
   }
 
   async deleteDefinition(companyId: string, id: string) {
+    const def = await this.prisma.alertDefinition.findUnique({
+      where: { id },
+    });
+    if (!def) {
+      throw new NotFoundException('Alert definition template not found');
+    }
+    if (companyId !== 'all' && def.companyId !== companyId) {
+      throw new ForbiddenException('Access denied: Alert definition belongs to another company');
+    }
+
     const existingInCache = this.recentDefinitions.get(id);
     
     // Set to inactive in cache to instantly remove from UI
@@ -766,7 +790,16 @@ export class AlertsService {
     });
   }
 
-  async deleteBroadcast(id: string) {
+  async deleteBroadcast(companyId: string, id: string) {
+    const broadcast = await this.prisma.companyBroadcastLog.findUnique({
+      where: { id },
+    });
+    if (!broadcast) {
+      throw new NotFoundException('Broadcast not found');
+    }
+    if (companyId !== 'all' && broadcast.companyId !== companyId) {
+      throw new ForbiddenException('Access denied: Broadcast belongs to another company');
+    }
     return this.prisma.companyBroadcastLog.delete({
       where: { id },
     });

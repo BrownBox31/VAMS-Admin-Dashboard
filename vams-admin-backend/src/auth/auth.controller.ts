@@ -65,7 +65,10 @@ export class AuthController {
 
   @Get('companies/:companyId/users')
   @UseGuards(JwtAuthGuard)
-  getUsers(@Param('companyId') companyId: string) {
+  getUsers(@Request() req: any, @Param('companyId') companyId: string) {
+    if (req.user.role !== 'SUPER_ADMIN' && req.user.companyId !== companyId) {
+      throw new UnauthorizedException('Access denied: Cannot access another company\'s users');
+    }
     return this.authService.getCompanyUsers(companyId);
   }
 

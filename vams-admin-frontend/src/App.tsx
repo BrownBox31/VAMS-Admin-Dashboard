@@ -127,6 +127,10 @@ export default function App() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(localStorage.getItem('vams_admin_selected_company_id'));
 
+  const selectedCompanyName = selectedCompanyId === 'all'
+    ? 'Global'
+    : (companies.find(c => c.id === selectedCompanyId)?.name || userProfile?.companyCode || userProfile?.companyName || 'Tenant');
+
   // Interactive UI State for Multi-Tenant Workspace
   const [expandedCompanyId, setExpandedCompanyId] = useState<string | null>(null);
   const [companySubTab, setCompanySubTab] = useState<'users' | 'tasks' | 'policies'>('users');
@@ -934,7 +938,7 @@ export default function App() {
             </div>
             <div>
               <h2 className="text-base font-bold text-white tracking-tight" style={{ fontFamily: 'var(--font-title)' }}>
-                VAMS Admin
+                {userProfile?.companyCode || userProfile?.companyName || 'VAMS Admin'}
               </h2>
               <span className="text-[10px] text-gray-500 tracking-widest uppercase font-semibold">
                 {userProfile?.role === 'SUPER_ADMIN' ? 'Super Administrator' : 'Tenant Administrator'}
@@ -1057,7 +1061,7 @@ export default function App() {
         <header className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-3xl font-extrabold text-white tracking-tight" style={{ fontFamily: 'var(--font-title)' }}>
-              {selectedCompanyId === 'all' ? 'Global Operations Control Desk' : 'Tenant Operations Control Desk'}
+              {selectedCompanyId === 'all' ? 'Global Operations Control Desk' : `${selectedCompanyName} Operations Control Desk`}
             </h1>
             <p className="text-sm text-gray-400 mt-1">
               {selectedCompanyId === 'all' 
