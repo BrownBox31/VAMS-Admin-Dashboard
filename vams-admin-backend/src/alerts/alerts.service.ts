@@ -241,7 +241,7 @@ export class AlertsService {
     }
 
     const totalCount = alerts.length;
-    const openCount = alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS').length;
+    const openCount = alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS' || a.status === 'BREACHED').length;
     const resolvedCount = alerts.filter(a => a.status === 'RESOLVED').length;
     const reopenedCount = alerts.filter(a => a.status === 'REOPENED').length;
     const reassignCount = alerts.reduce((acc, curr) => acc + (curr.assignments ? curr.assignments.length : 0), 0);

@@ -157,6 +157,7 @@ enum AlertStatus {
   IN_PROGRESS
   RESOLVED
   REOPENED
+  BREACHED
 }
 
 model AlertDefinition {

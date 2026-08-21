@@ -193,7 +193,7 @@ export default function App() {
   const filteredTelemetryAlerts = useMemo(() => {
     let list = [...allFetchedAlerts];
     if (telemetryFilter === 'OPEN') {
-      list = list.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS');
+      list = list.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS' || a.status === 'BREACHED');
     } else if (telemetryFilter === 'RESOLVED') {
       list = list.filter(a => a.status === 'RESOLVED');
     } else if (telemetryFilter === 'REOPENED') {
@@ -1252,7 +1252,7 @@ export default function App() {
                     analytics.companiesData.map(c => {
                       const isExpanded = expandedCompanyId === c.id;
                       const userCount = c.users.length;
-                      const openAlerts = c.alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS').length;
+                      const openAlerts = c.alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS' || a.status === 'BREACHED').length;
                       const maxLicense = c.settings?.maxUsers ?? 0;
 
                       return (
@@ -1435,6 +1435,7 @@ export default function App() {
                                           else if (a.status === 'IN_PROGRESS') statClass = 'bg-amber-950/40 text-amber-500 border border-amber-900/40';
                                           else if (a.status === 'RESOLVED') statClass = 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/40';
                                           else if (a.status === 'REOPENED') statClass = 'bg-rose-950/40 text-rose-500 border border-rose-900/40';
+                                          else if (a.status === 'BREACHED') statClass = 'bg-red-950/40 text-red-500 border border-red-900/40';
 
                                           return (
                                             <tr key={a.id} className="hover:bg-white/5 transition-all">
@@ -3178,6 +3179,7 @@ export default function App() {
                         else if (a.status === 'RESOLVED') statClass = 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/40';
                         else if (a.status === 'REOPENED') statClass = 'bg-rose-950/40 text-rose-500 border border-rose-900/40';
                         else if (a.status === 'REASSIGNED') statClass = 'bg-sky-950/40 text-sky-400 border border-sky-900/40';
+                        else if (a.status === 'BREACHED') statClass = 'bg-red-950/40 text-red-500 border border-red-900/40';
 
                         return (
                           <tr key={a.id} className="hover:bg-white/5 transition-all">

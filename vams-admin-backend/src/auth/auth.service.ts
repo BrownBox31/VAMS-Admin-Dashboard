@@ -238,7 +238,7 @@ export class AuthService {
     });
 
     return companies.map(c => {
-      const openAlerts = c.alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS').length;
+      const openAlerts = c.alerts.filter(a => a.status === 'OPEN' || a.status === 'IN_PROGRESS' || a.status === 'BREACHED').length;
       return {
         id: c.id,
         name: c.name,
