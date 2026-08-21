@@ -10,7 +10,7 @@ import { JwtStrategy } from './jwt.strategy';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'vams-admin-portal-super-secret-key-development',
-      signOptions: { expiresIn: '1d' },
+      signOptions: { expiresIn: '365d' },
     }),
   ],
   controllers: [AuthController],
