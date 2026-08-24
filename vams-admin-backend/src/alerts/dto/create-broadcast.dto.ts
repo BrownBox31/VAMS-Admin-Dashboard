@@ -13,4 +13,9 @@ export class CreateBroadcastDto {
   @IsString({ each: true })
   @IsOptional()
   targetUserIds?: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  targetRoles?: string[];
 }
